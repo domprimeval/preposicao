@@ -10,7 +10,7 @@ import uuid
 import io
 import httpx
 
-app = FastAPI(title="PROCON Galvão - Gerador de CP")
+app = FastAPI(title="TEP - Gerador de CP")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,7 +20,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# URL do Gotenberg — configurada via variável de ambiente no Render
 GOTENBERG_URL = os.getenv("GOTENBERG_URL", "http://localhost:3000")
 
 DB_PATH = "documentos.db"
@@ -126,7 +125,8 @@ async def gerar_documento(
     modelo: str = Form(...),
     polo_ativo: str = Form(...),
     numero_reclamacao: str = Form(...),
-    comarca: str = Form("")
+    juizo_comarca: str = Form(""),
+    dpreposto: str = Form(""),
 ):
     with get_db() as conn:
         row = conn.execute("SELECT arquivo FROM modelos WHERE nome = ?", (modelo,)).fetchone()
@@ -139,21 +139,21 @@ async def gerar_documento(
         raise HTTPException(status_code=500, detail="Arquivo do modelo não encontrado no servidor.")
 
     doc = Document(caminho_arquivo)
+
     substituicoes = {
-        "POLOATIVO": polo_ativo,
+        "POLOATIVO":   polo_ativo,
         "NRECLAMAÇÃO": numero_reclamacao,
-        "DATAHOJE": formatar_data_por_extenso(),
-        "CMJUIZO": comarca,
+        "DATAHOJE":    formatar_data_por_extenso(),
+        "CMJUIZO":     juizo_comarca,   # mesmo placeholder, usado para comarca e juízo
+        "DPREPOSTO":   dpreposto,       # texto compilado com todos os prepostos
     }
     for chave, valor in substituicoes.items():
         substituir_texto(doc, chave, valor)
 
-    # Salva o .docx preenchido em memória
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
 
-    # Envia para o Gotenberg converter para PDF
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
