@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
-// ← Troque pela URL do seu backend no Render.com após o deploy
-const API_URL = process.env.REACT_APP_API_URL || 'https://preposicao.onrender.com';
+const API_URL = process.env.REACT_APP_API_URL || 'https://SEU-BACKEND.onrender.com';
 
 function Toast({ message, type, onClose }) {
   useEffect(() => {
@@ -31,12 +30,23 @@ function ConfirmModal({ message, onConfirm, onCancel }) {
   );
 }
 
+function compilarPrepostos(prepostos) {
+  const validos = prepostos.filter(p => p.nome.trim());
+  if (validos.length === 0) return '';
+  const partes = validos.map(p =>
+    p.cpf.trim() ? `${p.nome.trim()}, CPF ${p.cpf.trim()}` : p.nome.trim()
+  );
+  if (partes.length === 1) return partes[0];
+  return partes.slice(0, -1).join(', ') + ' e ' + partes[partes.length - 1];
+}
+
 export default function App() {
   const [modelos, setModelos] = useState([]);
   const [modeloSelecionado, setModeloSelecionado] = useState('');
   const [poloAtivo, setPoloAtivo] = useState('');
   const [numeroReclamacao, setNumeroReclamacao] = useState('');
-  const [comarca, setComarca] = useState('');
+  const [juizoComarca, setJuizoComarca] = useState('');
+  const [prepostos, setPrepostos] = useState([{ nome: '', cpf: '' }]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState(null);
@@ -44,11 +54,7 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef();
 
-  const isVirtual = modeloSelecionado.toUpperCase().includes('VIRTUAL');
-
-  useEffect(() => {
-    fetchModelos();
-  }, []);
+  useEffect(() => { fetchModelos(); }, []);
 
   const showToast = (message, type = 'success') => setToast({ message, type });
 
@@ -103,14 +109,22 @@ export default function App() {
     });
   }
 
+  function atualizarPreposto(index, campo, valor) {
+    setPrepostos(prev => prev.map((p, i) => i === index ? { ...p, [campo]: valor } : p));
+  }
+
+  function adicionarPreposto() {
+    setPrepostos(prev => [...prev, { nome: '', cpf: '' }]);
+  }
+
+  function removerPreposto(index) {
+    setPrepostos(prev => prev.filter((_, i) => i !== index));
+  }
+
   async function handleGerarDocumento(e) {
     e.preventDefault();
     if (!modeloSelecionado || !poloAtivo || !numeroReclamacao) {
       showToast('Preencha todos os campos obrigatórios.', 'error');
-      return;
-    }
-    if (isVirtual && !comarca) {
-      showToast('Informe a comarca para audiências virtuais.', 'error');
       return;
     }
     setLoading(true);
@@ -118,7 +132,8 @@ export default function App() {
     form.append('modelo', modeloSelecionado);
     form.append('polo_ativo', poloAtivo);
     form.append('numero_reclamacao', numeroReclamacao);
-    form.append('comarca', comarca);
+    form.append('juizo_comarca', juizoComarca);
+    form.append('dpreposto', compilarPrepostos(prepostos));
     try {
       const res = await fetch(`${API_URL}/gerar`, { method: 'POST', body: form });
       if (!res.ok) {
@@ -132,7 +147,7 @@ export default function App() {
       a.download = `${poloAtivo} - CARTA DE PREPOSIÇÃO.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-      showToast('Documento gerado e baixado com sucesso!');
+      showToast('PDF gerado e baixado com sucesso!');
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -142,21 +157,18 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* Background texture */}
       <div className="bg-texture" />
 
-      {/* Header */}
       <header className="header">
-        <div className="header__badge">PROCON</div>
+        <div className="header__badge">TEP</div>
         <div className="header__text">
-          <h1 className="header__title">Galvão</h1>
+          <h1 className="header__title">Trindade e Pernigotti</h1>
           <p className="header__subtitle">Gerador de Carta de Preposição</p>
         </div>
         <div className="header__seal">CP</div>
       </header>
 
       <main className="main">
-        {/* Modelos */}
         <section className="card">
           <div className="card__header">
             <span className="card__number">01</span>
@@ -167,21 +179,11 @@ export default function App() {
             className={`dropzone ${dragOver ? 'dropzone--active' : ''} ${uploading ? 'dropzone--loading' : ''}`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-              const file = e.dataTransfer.files[0];
-              if (file) handleUploadModelo(file);
-            }}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); handleUploadModelo(e.dataTransfer.files[0]); }}
             onClick={() => fileInputRef.current.click()}
           >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".docx"
-              style={{ display: 'none' }}
-              onChange={(e) => handleUploadModelo(e.target.files[0])}
-            />
+            <input ref={fileInputRef} type="file" accept=".docx" style={{ display: 'none' }}
+              onChange={(e) => handleUploadModelo(e.target.files[0])} />
             <div className="dropzone__icon">{uploading ? '⟳' : '↑'}</div>
             <p className="dropzone__text">
               {uploading ? 'Enviando modelo...' : 'Arraste um arquivo .docx ou clique para selecionar'}
@@ -191,21 +193,16 @@ export default function App() {
           {modelos.length > 0 ? (
             <ul className="modelo-list">
               {modelos.map((m) => (
-                <li
-                  key={m.id}
+                <li key={m.id}
                   className={`modelo-item ${modeloSelecionado === m.nome ? 'modelo-item--active' : ''}`}
                   onClick={() => setModeloSelecionado(m.nome)}
                 >
                   <span className="modelo-item__icon">📄</span>
                   <span className="modelo-item__nome">{m.nome}</span>
                   {modeloSelecionado === m.nome && <span className="modelo-item__check">✓</span>}
-                  <button
-                    className="modelo-item__delete"
+                  <button className="modelo-item__delete"
                     onClick={(e) => { e.stopPropagation(); promptRemover(m.nome); }}
-                    title="Remover modelo"
-                  >
-                    ✕
-                  </button>
+                    title="Remover modelo">✕</button>
                 </li>
               ))}
             </ul>
@@ -214,7 +211,6 @@ export default function App() {
           )}
         </section>
 
-        {/* Formulário */}
         <section className="card">
           <div className="card__header">
             <span className="card__number">02</span>
@@ -229,88 +225,73 @@ export default function App() {
               </div>
             </div>
 
+            <div className="form__section-title">Processo</div>
+
             <div className="field">
-              <label className="field__label">
-                Polo Ativo <span className="required">*</span>
-              </label>
-              <input
-                className="field__input"
-                type="text"
-                placeholder="Nome do polo ativo"
-                value={poloAtivo}
-                onChange={(e) => setPoloAtivo(e.target.value)}
-                required
-              />
+              <label className="field__label">Polo Ativo <span className="required">*</span></label>
+              <input className="field__input" type="text" placeholder="Nome do reclamante"
+                value={poloAtivo} onChange={(e) => setPoloAtivo(e.target.value)} required />
             </div>
 
             <div className="field">
-              <label className="field__label">
-                Número da Reclamação <span className="required">*</span>
-              </label>
-              <input
-                className="field__input"
-                type="text"
-                placeholder="Ex: 0001234-56.2024.8.21.0001"
-                value={numeroReclamacao}
-                onChange={(e) => setNumeroReclamacao(e.target.value)}
-                required
-              />
+              <label className="field__label">Número da Reclamação <span className="required">*</span></label>
+              <input className="field__input" type="text" placeholder="Ex: 0001234-56.2024.8.21.0001"
+                value={numeroReclamacao} onChange={(e) => setNumeroReclamacao(e.target.value)} required />
             </div>
 
-            {isVirtual && (
-              <div className="field field--animated">
-                <label className="field__label">
-                  Comarca <span className="required">*</span>
-                </label>
-                <input
-                  className="field__input"
-                  type="text"
-                  placeholder="Ex: Porto Alegre"
-                  value={comarca}
-                  onChange={(e) => setComarca(e.target.value)}
-                />
+            <div className="field">
+              <label className="field__label">Juízo / Comarca</label>
+              <input className="field__input" type="text" placeholder="Ex: 1ª Vara Cível de Porto Alegre"
+                value={juizoComarca} onChange={(e) => setJuizoComarca(e.target.value)} />
+            </div>
+
+            <div className="form__section-title">
+              Preposto(s)
+              <button type="button" className="btn-add-preposto" onClick={adicionarPreposto}>
+                + Adicionar preposto
+              </button>
+            </div>
+
+            {prepostos.map((p, i) => (
+              <div key={i} className="preposto-row">
+                <div className="preposto-index">{i + 1}</div>
+                <div className="preposto-fields">
+                  <input className="field__input" type="text" placeholder="Nome completo"
+                    value={p.nome} onChange={(e) => atualizarPreposto(i, 'nome', e.target.value)} />
+                  <input className="field__input" type="text" placeholder="CPF (000.000.000-00)"
+                    value={p.cpf} onChange={(e) => atualizarPreposto(i, 'cpf', e.target.value)} />
+                </div>
+                {prepostos.length > 1 && (
+                  <button type="button" className="btn-remove-preposto" onClick={() => removerPreposto(i)}
+                    title="Remover preposto">✕</button>
+                )}
+              </div>
+            ))}
+
+            {prepostos.some(p => p.nome.trim()) && (
+              <div className="preposto-preview">
+                <span className="preposto-preview__label">Texto gerado:</span>
+                <span className="preposto-preview__text">{compilarPrepostos(prepostos)}</span>
               </div>
             )}
 
             <div className="form__footer">
               <p className="form__date-note">
-                📅 Data preenchida automaticamente: <strong>{new Date().toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+                📅 Data automática: <strong>{new Date().toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
               </p>
-              <button
-                className={`btn btn--primary ${loading ? 'btn--loading' : ''}`}
-                type="submit"
-                disabled={loading || !modeloSelecionado}
-              >
-                {loading ? (
-                  <><span className="spinner" /> Gerando PDF...</>
-                ) : (
-                  <>↓ Gerar e Baixar PDF</>
-                )}
+              <button className={`btn btn--primary ${loading ? 'btn--loading' : ''}`}
+                type="submit" disabled={loading || !modeloSelecionado}>
+                {loading ? <><span className="spinner" /> Gerando...</> : <>↓ Gerar PDF</>}
               </button>
             </div>
           </form>
         </section>
       </main>
 
-      <footer className="footer">
-        Powered by RaniellyCV
-      </footer>
+      <footer className="footer">Powered by RaniellyCV</footer>
 
-      {toast && (
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          onClose={() => setToast(null)}
-        />
-      )}
-
-      {confirm && (
-        <ConfirmModal
-          message={confirm.message}
-          onConfirm={confirm.onConfirm}
-          onCancel={confirm.onCancel}
-        />
-      )}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      {confirm && <ConfirmModal message={confirm.message} onConfirm={confirm.onConfirm} onCancel={confirm.onCancel} />}
     </div>
   );
 }
