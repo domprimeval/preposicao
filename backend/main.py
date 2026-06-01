@@ -1,13 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from docx import Document
 from datetime import datetime
-from docx2pdf import convert
 import shutil
 import sqlite3
 import os
 import uuid
+import io
 
 app = FastAPI(title="PROCON Galvão - Gerador de CP")
 
@@ -21,10 +21,8 @@ app.add_middleware(
 
 DB_PATH = "documentos.db"
 UPLOAD_DIR = "uploads"
-OUTPUT_DIR = "outputs"
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 def get_db():
@@ -150,29 +148,17 @@ async def gerar_documento(
     for chave, valor in substituicoes.items():
         substituir_texto(doc, chave, valor)
 
-    uid = uuid.uuid4().hex[:8]
-    nome_base = f"{polo_ativo} - CARTA DE PREPOSIÇÃO - {uid}"
-    caminho_docx = os.path.join(OUTPUT_DIR, f"{nome_base}.docx")
-    caminho_pdf = os.path.join(OUTPUT_DIR, f"{nome_base}.pdf")
+    # Salva o .docx preenchido em memória e devolve direto
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
 
-    doc.save(caminho_docx)
+    nome_arquivo = f"{polo_ativo} - CARTA DE PREPOSIÇÃO.docx"
 
-    try:
-        convert(caminho_docx, caminho_pdf)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao converter para PDF: {e}")
-    finally:
-        if os.path.exists(caminho_docx):
-            os.remove(caminho_docx)
-
-    if not os.path.exists(caminho_pdf):
-        raise HTTPException(status_code=500, detail="PDF não foi gerado.")
-
-    return FileResponse(
-        caminho_pdf,
-        media_type="application/pdf",
-        filename=f"{polo_ativo} - CARTA DE PREPOSIÇÃO.pdf",
-        background=None
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'}
     )
 
 
