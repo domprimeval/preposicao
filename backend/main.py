@@ -8,6 +8,7 @@ import sqlite3
 import os
 import uuid
 import io
+import httpx
 
 app = FastAPI(title="PROCON Galvão - Gerador de CP")
 
@@ -18,6 +19,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# URL do Gotenberg — configurada via variável de ambiente no Render
+GOTENBERG_URL = os.getenv("GOTENBERG_URL", "http://localhost:3000")
 
 DB_PATH = "documentos.db"
 UPLOAD_DIR = "uploads"
@@ -67,8 +71,6 @@ def substituir_texto(doc, placeholder, novo_texto):
                         if placeholder in run.text:
                             run.text = run.text.replace(placeholder, novo_texto)
 
-
-# --- Rotas ---
 
 @app.get("/modelos")
 def listar_modelos():
@@ -137,28 +139,39 @@ async def gerar_documento(
         raise HTTPException(status_code=500, detail="Arquivo do modelo não encontrado no servidor.")
 
     doc = Document(caminho_arquivo)
-    data_hoje = formatar_data_por_extenso()
-
     substituicoes = {
         "POLOATIVO": polo_ativo,
         "NRECLAMAÇÃO": numero_reclamacao,
-        "DATAHOJE": data_hoje,
+        "DATAHOJE": formatar_data_por_extenso(),
         "CMJUIZO": comarca,
     }
     for chave, valor in substituicoes.items():
         substituir_texto(doc, chave, valor)
 
-    # Salva o .docx preenchido em memória e devolve direto
+    # Salva o .docx preenchido em memória
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
 
-    nome_arquivo = f"{polo_ativo} - CARTA DE PREPOSIÇÃO.docx"
+    # Envia para o Gotenberg converter para PDF
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                f"{GOTENBERG_URL}/forms/libreoffice/convert",
+                files={"files": ("documento.docx", buffer, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+            )
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Erro na conversão: {response.text}")
+    except httpx.ConnectError:
+        raise HTTPException(status_code=500, detail="Serviço de conversão indisponível. Tente novamente em instantes.")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=500, detail="Tempo esgotado na conversão. Tente novamente.")
 
+    nome_final = f"{polo_ativo} - CARTA DE PREPOSIÇÃO.pdf"
     return StreamingResponse(
-        buffer,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'}
+        io.BytesIO(response.content),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nome_final}"'}
     )
 
 
